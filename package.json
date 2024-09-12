@@ -1,0 +1,17 @@
+{
+  "name": "rn-unify",
+  "module": "./lib/index.js",
+  "packageManager": "pnpm@9.10.0",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "typescript": "^5.6.2",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.4",
+    "@types/yargs": "^17.0.33",
+    "@tsconfig/node22": "^22.0.0"
+  }
+}
