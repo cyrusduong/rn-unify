@@ -1,17 +1,27 @@
 {
   "name": "rn-unify",
+  "type": "module",
   "module": "./lib/index.js",
-  "packageManager": "pnpm@9.10.0",
+  "main": "lib/index.js",
+  "bin": {
+    "rn-unify": "./lib/index.js"
+  },
+  "license": "MIT",
+  "packageManager": "yarn@1.22.22",
   "scripts": {
-    "build": "tsc"
+    "build": "rollup -c",
+    "dev": "rollup -c --watch"
   },
   "dependencies": {
-    "typescript": "^5.6.2",
-    "yargs": "^17.7.2"
+    "typescript": "^5.6.2"
   },
   "devDependencies": {
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@tsconfig/node22": "^22.0.0",
     "@types/node": "^22.5.4",
-    "@types/yargs": "^17.0.33",
-    "@tsconfig/node22": "^22.0.0"
+    "rollup": "^4.21.3",
+    "rollup-plugin-shebang-bin": "^0.0.7",
+    "tslib": "^2.7.0"
   }
 }

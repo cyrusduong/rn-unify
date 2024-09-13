@@ -1,5 +1,4 @@
-import yargs from "yargs";
-import { hideBin } from "yargs/helpers";
+import { ExecException, execSync } from "child_process";
 
 function splitVersion(version: string) {
   return version.split(".").map(Number);
@@ -38,38 +37,81 @@ function resolveConflicts({
   );
 }
 
-yargs(hideBin(process.argv))
-  .command(
-    "resolve <pkg> <version1> <version2>",
-    "Resolve package version conflicts",
-    (yargs) => {
-      return yargs
-        .positional("pkg", {
-          describe: "Pacakge Name",
-          type: "string",
-          demandOption: true,
-        })
-        .positional("version1", {
-          describe: "First version",
-          type: "string",
-          demandOption: true,
-        })
-        .positional("version2", {
-          describe: "Second version",
-          type: "string",
-          demandOption: true,
-        });
-      // .array("versionN");
-    },
-    (argv) => {
-      resolveConflicts({
-        packageName: argv.pkg as string,
-        versions: [
-          argv.version1,
-          argv.version2,
-          // ...(argv.versionN as string[]),
-        ] as string[],
-      });
-    },
-  )
-  .help().argv;
+function isPackageInstalled(pkg: string) {
+  try {
+    return execSync(`yarn list ${pkg}`, { encoding: "utf8" });
+  } catch (error) {
+    console.error("${pkg} is not installed");
+  }
+}
+
+function getPackageList() {
+  console.log("Getting packages in repo");
+  const result = execSync("yarn list --json", { encoding: "utf8" });
+  const parsed = JSON.parse(result);
+  const packages = parsed.data.trees
+    // .filter((pkg: { name: string; depth: number }) => pkg.depth === 0)
+    .map((pkg: { name: string; depth: number }) => {
+      const split = pkg.name.split("@");
+      if (split[0] === "") return `@${split[1]}`; // Had leading @, add it back and return the name
+      if (split[0] !== "") return split[0]; // No leading @, just reuturn name
+    })
+    .filter((v: string, i: number, array: string[]) => array.indexOf(v) === i); // unique
+
+  console.log({ packages });
+
+  return packages;
+}
+
+function why(pkg: string) {
+  console.log(`Running yarn why for ${pkg}`);
+  try {
+    return execSync(`yarn why ${pkg}`, { encoding: "utf8" });
+  } catch (error) {
+    console.error(
+      `Error finding reason for ${pkg}: ${(error as Error)?.message}`,
+    );
+  }
+  console.log(`Finished yarn why for ${pkg}`);
+}
+
+const extentionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
+const extGlob = extentionsToCheck.map((ext) => `"*.${ext}"`).join(" --glob ");
+const rnModuleExpression =
+  "ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule";
+function isRnPackage(pkgName: string) {
+  // console.log(`Checking if ${pkgName} contains NativeModule code`);
+  try {
+    execSync(
+      `rg --max-count=1 --no-ignore --glob ${extGlob} -e "${rnModuleExpression}" "node_modules/${pkgName}"`,
+      { stdio: "ignore" },
+    );
+    return true;
+  } catch (e) {
+    const error = e as ExecException;
+    // console.error(error.message);
+    // if (error?.code === 1) return false; // in rg this is nothing found, but no failure
+    return false;
+  }
+}
+
+// Note: is this faster? Maybe reimplement and compare rather than using yarn list to search set of paths.
+// function findRnPackages(pkgNames: string[]) {
+//   console.log("Looking for packages with RN native modules");
+//   const result = execSync(
+//     `rg --files-with-matches --max-count=1 --no-ignore "ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule" node_modules | cut -d'/' -f2 | sort | uniq`,
+//   );
+//   console.log("Found following packages in your project that needs checked:");
+//   const rnPackages: string[] = result.toString().trimEnd().split("\n");
+//   console.log(rnPackages);
+//   return rnPackages;
+// }
+
+const list = getPackageList();
+console.log({ list });
+
+const rnPackages = list.filter(isRnPackage);
+console.log({ rnPackages });
+
+// const whys = rnPackages.map(why);
+// console.log(whys);
