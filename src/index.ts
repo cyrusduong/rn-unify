@@ -1,4 +1,5 @@
 import { ExecException, execSync } from "child_process";
+import fs from "fs";
 
 function splitVersion(version: string) {
   return version.split(".").map(Number);
@@ -45,21 +46,18 @@ function isPackageInstalled(pkg: string) {
   }
 }
 
+interface YarnDependency {
+  name: string;
+  version: string;
+  children?: YarnDependency[];
+}
+
 function getPackageList() {
   console.log("Getting packages in repo");
-  const result = execSync("yarn list --json", { encoding: "utf8" });
-  const parsed = JSON.parse(result);
-  const packages = parsed.data.trees
-    // .filter((pkg: { name: string; depth: number }) => pkg.depth === 0)
-    .map((pkg: { name: string; depth: number }) => {
-      const split = pkg.name.split("@");
-      if (split[0] === "") return `@${split[1]}`; // Had leading @, add it back and return the name
-      if (split[0] !== "") return split[0]; // No leading @, just reuturn name
-    })
-    .filter((v: string, i: number, array: string[]) => array.indexOf(v) === i); // unique
-
-  console.log({ packages });
-
+  const json = execSync("yarn list --json", { encoding: "utf8" });
+  const parsed = JSON.parse(json);
+  const packages = parsed.data.trees as YarnDependency[];
+  // console.log({ packages });
   return packages;
 }
 
@@ -96,22 +94,99 @@ function isRnPackage(pkgName: string) {
 }
 
 // Note: is this faster? Maybe reimplement and compare rather than using yarn list to search set of paths.
-// function findRnPackages(pkgNames: string[]) {
-//   console.log("Looking for packages with RN native modules");
-//   const result = execSync(
-//     `rg --files-with-matches --max-count=1 --no-ignore "ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule" node_modules | cut -d'/' -f2 | sort | uniq`,
-//   );
-//   console.log("Found following packages in your project that needs checked:");
-//   const rnPackages: string[] = result.toString().trimEnd().split("\n");
-//   console.log(rnPackages);
-//   return rnPackages;
-// }
+function findRnPackages() {
+  const result = execSync(
+    `rg --files-with-matches --max-count=1 --no-ignore -e "${rnModuleExpression}" node_modules | sort | uniq`,
+  );
+  console.log("Found following packages in your project that needs checked:");
+  const rnPackages: string[] = result.toString().trimEnd().split("\n");
+  console.log(rnPackages);
+  return rnPackages;
+}
 
-const list = getPackageList();
-console.log({ list });
+function findPackageDuplicates(packageMap: Map<string, Set<string>>) {
+  let multipleVersions = 0;
+  packageMap.forEach((versions, key) => {
+    console.log(`Evaluating package: ${key}`);
 
-const rnPackages = list.filter(isRnPackage);
-console.log({ rnPackages });
+    if (versions.size > 1) {
+      multipleVersions++;
+    }
+  });
+
+  console.log(
+    `Found ${multipleVersions} duplicate package versions out of ${packageMap.size}`,
+  );
+}
+
+function parseYarnLock() {
+  const file = fs.readFileSync("yarn.lock", "utf8");
+  const packages = new Map<string, Set<string>>();
+  const lines = file.split("\n");
+  let currentPackageName = "";
+
+  lines.forEach((line) => {
+    if (line.endsWith(":")) {
+      const split = line.replace('"', "").split("@");
+      if (split[0] === "") {
+        // leading @ is a scoped package
+        currentPackageName = `@${split[1]}`;
+      } else {
+        currentPackageName = split[0];
+      }
+
+      // Initalize the set if this is a new name we're encountering
+      const currentPackageSet = packages.get(currentPackageName);
+      if (!currentPackageSet) {
+        packages.set(currentPackageName, new Set());
+      }
+    } else if (line.trim().startsWith("version")) {
+      const currentPackageSet = packages.get(currentPackageName);
+      const [_, version] = line.trim().replaceAll('"', "").split(" ");
+      currentPackageSet?.add(version);
+    }
+  });
+
+  return packages;
+}
+
+// const pkgVersions: { [key: string]: Set<string> } = {};
+//
+// Object.keys(parsed).forEach((key) => {
+//   const [pkgName, version] = key.split("@").filter(Boolean); // Handle scoped packages
+//   if (!pkgVersions[pkgName]) {
+//     pkgVersions[pkgName] = new Set();
+//   }
+//   pkgVersions[pkgName].add(parsed[key].version);
+// });
+
+// console.time("list");
+// const list = getPackageList();
+// console.log({ list });
+// console.timeEnd("list");
+
+console.time("versions");
+const list = parseYarnLock();
+console.timeEnd("versions");
+
+console.time("dupes");
+const duplicates = findPackageDuplicates(list);
+console.timeEnd("dupes");
+
+// console.time("rg");
+// const grepResult = findRnPackages();
+// console.timeEnd("rg");
+// console.log({ grepResult });
+
+// console.time("filter");
+// const rnPackagesThatAreDuplicated = duplicates.filter(([name]) =>
+//   isRnPackage(name),
+// );
+// rnPackagesThatAreDuplicated.forEach(([name, versionsSet]) => {
+//   const versions = Array.from(versionsSet);
+//   console.log(`Package: ${name}, Versions: ${versions.join(", ")}`);
+// });
+// console.timeEnd("filter");
 
 // const whys = rnPackages.map(why);
 // console.log(whys);
