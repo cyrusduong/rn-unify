@@ -1,6 +1,8 @@
 import { exec, execSync, SpawnSyncReturns } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
+import fg from "fast-glob";
+import path from "path";
 
 const execAsync = promisify(exec);
 
@@ -79,18 +81,21 @@ function why(pkg: string) {
 const extentionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
 const extGlob = extentionsToCheck.map((ext) => `"*.${ext}"`).join(" --glob ");
 const rnModuleExpression =
-  "ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule";
+  /ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule/;
 async function isRnPackage(pkgName: string) {
-  // console.log(`Checking if ${pkgName} contains NativeModule code`);
-  const cmd = `rg --quiet --max-count=1 --no-ignore --glob ${extGlob} -e "${rnModuleExpression}" "node_modules/${pkgName}"`;
-  try {
-    await execAsync(cmd);
-    return true;
-  } catch (e) {
-    const error = e as SpawnSyncReturns<any>;
-    if (error?.status === 1) return false; // in rg this is nothing found, not a failure
-    // console.error(error);
-    return false;
+  const files = await fg(extGlob, {
+    cwd: path.join("node_modules", pkgName),
+    absolute: true,
+    onlyFiles: true,
+  });
+
+  for (const file of files) {
+    const content = fs.readFileSync(file, "utf8");
+    if (rnModuleExpression.test(content)) {
+      return pkgName;
+    }
+
+    return null;
   }
 }
 
