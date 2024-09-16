@@ -1,5 +1,8 @@
-import { ExecException, execSync } from "child_process";
+import { exec, execSync, SpawnSyncReturns } from "child_process";
+import { promisify } from "util";
 import fs from "fs";
+
+const execAsync = promisify(exec);
 
 function splitVersion(version: string) {
   return version.split(".").map(Number);
@@ -77,56 +80,57 @@ const extentionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
 const extGlob = extentionsToCheck.map((ext) => `"*.${ext}"`).join(" --glob ");
 const rnModuleExpression =
   "ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule";
-function isRnPackage(pkgName: string) {
+async function isRnPackage(pkgName: string) {
   // console.log(`Checking if ${pkgName} contains NativeModule code`);
+  const cmd = `rg --quiet --max-count=1 --no-ignore --glob ${extGlob} -e "${rnModuleExpression}" "node_modules/${pkgName}"`;
   try {
-    execSync(
-      `rg --max-count=1 --no-ignore --glob ${extGlob} -e "${rnModuleExpression}" "node_modules/${pkgName}"`,
-      { stdio: "ignore" },
-    );
+    await execAsync(cmd);
     return true;
   } catch (e) {
-    const error = e as ExecException;
-    // console.error(error.message);
-    // if (error?.code === 1) return false; // in rg this is nothing found, but no failure
+    const error = e as SpawnSyncReturns<any>;
+    if (error?.status === 1) return false; // in rg this is nothing found, not a failure
+    // console.error(error);
     return false;
   }
 }
 
-// Note: is this faster? Maybe reimplement and compare rather than using yarn list to search set of paths.
-function findRnPackages() {
-  const result = execSync(
-    `rg --files-with-matches --max-count=1 --no-ignore -e "${rnModuleExpression}" node_modules | sort | uniq`,
-  );
-  console.log("Found following packages in your project that needs checked:");
-  const rnPackages: string[] = result.toString().trimEnd().split("\n");
-  console.log(rnPackages);
-  return rnPackages;
+async function findRnPackages(packages: string[]) {
+  const promises = packages.map(async (pkgName) => {
+    const result = await isRnPackage(pkgName);
+    return result ? pkgName : null;
+  });
+
+  const rnPackages = await Promise.all(promises);
+  return rnPackages.filter(Boolean) as string[];
 }
 
 function findPackageDuplicates(packageMap: Map<string, Set<string>>) {
   let multipleVersions = 0;
+  const packages: string[] = [];
   packageMap.forEach((versions, key) => {
-    console.log(`Evaluating package: ${key}`);
+    // console.log(`Evaluating package: ${key}`);
 
     if (versions.size > 1) {
       multipleVersions++;
+      packages.push(key);
     }
   });
 
   console.log(
     `Found ${multipleVersions} duplicate package versions out of ${packageMap.size}`,
   );
+  return packages;
 }
 
-function parseYarnLock() {
+function parseYarnLockForPackages() {
   const file = fs.readFileSync("yarn.lock", "utf8");
   const packages = new Map<string, Set<string>>();
   const lines = file.split("\n");
   let currentPackageName = "";
 
   lines.forEach((line) => {
-    if (line.endsWith(":")) {
+    line = line.trim();
+    if (line.endsWith(":") && !line.includes("dependencies")) {
       const split = line.replace('"', "").split("@");
       if (split[0] === "") {
         // leading @ is a scoped package
@@ -140,9 +144,9 @@ function parseYarnLock() {
       if (!currentPackageSet) {
         packages.set(currentPackageName, new Set());
       }
-    } else if (line.trim().startsWith("version")) {
+    } else if (line.startsWith("version")) {
       const currentPackageSet = packages.get(currentPackageName);
-      const [_, version] = line.trim().replaceAll('"', "").split(" ");
+      const [_, version] = line.replaceAll('"', "").split(" ");
       currentPackageSet?.add(version);
     }
   });
@@ -150,43 +154,22 @@ function parseYarnLock() {
   return packages;
 }
 
-// const pkgVersions: { [key: string]: Set<string> } = {};
-//
-// Object.keys(parsed).forEach((key) => {
-//   const [pkgName, version] = key.split("@").filter(Boolean); // Handle scoped packages
-//   if (!pkgVersions[pkgName]) {
-//     pkgVersions[pkgName] = new Set();
-//   }
-//   pkgVersions[pkgName].add(parsed[key].version);
-// });
-
-// console.time("list");
-// const list = getPackageList();
-// console.log({ list });
-// console.timeEnd("list");
-
 console.time("versions");
-const list = parseYarnLock();
+const packageMap = parseYarnLockForPackages();
+const packages = Array.from(packageMap.keys());
 console.timeEnd("versions");
 
+console.time("rnPackages");
+const rnPackages = findRnPackages(packages);
+console.timeEnd("rnPackages");
+
 console.time("dupes");
-const duplicates = findPackageDuplicates(list);
+const duplicates = findPackageDuplicates(packageMap);
 console.timeEnd("dupes");
 
-// console.time("rg");
-// const grepResult = findRnPackages();
-// console.timeEnd("rg");
-// console.log({ grepResult });
-
-// console.time("filter");
-// const rnPackagesThatAreDuplicated = duplicates.filter(([name]) =>
-//   isRnPackage(name),
-// );
-// rnPackagesThatAreDuplicated.forEach(([name, versionsSet]) => {
-//   const versions = Array.from(versionsSet);
-//   console.log(`Package: ${name}, Versions: ${versions.join(", ")}`);
-// });
-// console.timeEnd("filter");
-
-// const whys = rnPackages.map(why);
-// console.log(whys);
+console.time("duplicateRnPackages");
+const duplicateRnPackages = (await rnPackages).filter((v) =>
+  duplicates.includes(v),
+);
+console.log(duplicateRnPackages);
+console.timeEnd("duplicateRnPackages");
