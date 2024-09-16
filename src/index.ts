@@ -1,10 +1,7 @@
-import { exec, execSync, SpawnSyncReturns } from "child_process";
-import { promisify } from "util";
+import { execSync } from "child_process";
 import fs from "fs";
 import fg from "fast-glob";
 import path from "path";
-
-const execAsync = promisify(exec);
 
 function splitVersion(version: string) {
   return version.split(".").map(Number);
@@ -62,7 +59,6 @@ function getPackageList() {
   const json = execSync("yarn list --json", { encoding: "utf8" });
   const parsed = JSON.parse(json);
   const packages = parsed.data.trees as YarnDependency[];
-  // console.log({ packages });
   return packages;
 }
 
@@ -113,8 +109,6 @@ function findPackageDuplicates(packageMap: Map<string, Set<string>>) {
   let multipleVersions = 0;
   const packages: string[] = [];
   packageMap.forEach((versions, key) => {
-    // console.log(`Evaluating package: ${key}`);
-
     if (versions.size > 1) {
       multipleVersions++;
       packages.push(key);
