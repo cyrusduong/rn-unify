@@ -1,5 +1,6 @@
 import resolve from "@rollup/plugin-node-resolve";
 import typescript from "@rollup/plugin-typescript";
+import commonjs from "@rollup/plugin-commonjs";
 import { chmodSync } from "fs";
 
 const file = "lib/index.js";
@@ -40,5 +41,5 @@ export default {
     file,
     format: "es",
   },
-  plugins: [resolve(), typescript(), shebang, makeExecutable],
+  plugins: [resolve(), typescript(), commonjs(), shebang, makeExecutable],
 };

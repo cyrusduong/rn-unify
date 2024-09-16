@@ -74,13 +74,14 @@ function why(pkg: string) {
   console.log(`Finished yarn why for ${pkg}`);
 }
 
-const extentionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
-const extGlob = extentionsToCheck.map((ext) => `"*.${ext}"`).join(" --glob ");
+const extensionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
+const extGlob = extensionsToCheck.map((ext) => `**/*.${ext}`);
 const rnModuleExpression =
   /ReactContextBaseJavaModule|RCTBridgeModule|ReactPackage|NativeModule/;
 async function isRnPackage(pkgName: string) {
+  const cwd = path.join("node_modules", pkgName);
   const files = await fg(extGlob, {
-    cwd: path.join("node_modules", pkgName),
+    cwd,
     absolute: true,
     onlyFiles: true,
   });
@@ -90,9 +91,9 @@ async function isRnPackage(pkgName: string) {
     if (rnModuleExpression.test(content)) {
       return pkgName;
     }
-
-    return null;
   }
+
+  return null;
 }
 
 async function findRnPackages(packages: string[]) {
@@ -153,22 +154,85 @@ function parseYarnLockForPackages() {
   return packages;
 }
 
-console.time("versions");
+function findNotHoistedRnPackages(rnPackages: string[]) {
+  const notHoisted = rnPackages
+    .map((packageName) => {
+      if (!fs.existsSync(`node_modules/${packageName}`)) return packageName;
+    })
+    .filter(Boolean);
+
+  return notHoisted;
+}
+
+function updateResolutions(
+  duplicatePackages: string[],
+  packageMap: Map<string, Set<string>>,
+) {
+  let shouldRerunYarn = false;
+  const packageJsonPath = path.resolve("package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
+
+  if (!packageJson.resolutions) {
+    shouldRerunYarn = true;
+    console.log("No resolutions key found in package.json, adding one.");
+    packageJson.resolutions = {};
+  }
+
+  duplicatePackages.forEach((pkgName) => {
+    const versions = Array.from(packageMap.get(pkgName) || []);
+    if (versions.length > 1) {
+      const newVersion = newestVersionFromList(versions);
+
+      if (newVersion !== packageJson.resolutions?.[pkgName]) {
+        shouldRerunYarn = true;
+        packageJson.resolutions[pkgName] = newVersion;
+      }
+    }
+  });
+
+  if (shouldRerunYarn) {
+    fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+    console.log("Updated package.json resolutions with resolved versions.");
+    console.log("Please re-run yarn to update the node_moudles tree");
+    console.log("");
+  }
+}
+
+// console.time("versions");
 const packageMap = parseYarnLockForPackages();
 const packages = Array.from(packageMap.keys());
-console.timeEnd("versions");
+// console.timeEnd("versions");
 
-console.time("rnPackages");
-const rnPackages = findRnPackages(packages);
-console.timeEnd("rnPackages");
+// console.time("rnPackages");
+const rnPackages = await findRnPackages(packages);
+// console.timeEnd("rnPackages");
 
-console.time("dupes");
+// console.time("dupes");
 const duplicates = findPackageDuplicates(packageMap);
-console.timeEnd("dupes");
+// console.timeEnd("dupes");
 
-console.time("duplicateRnPackages");
-const duplicateRnPackages = (await rnPackages).filter((v) =>
-  duplicates.includes(v),
-);
-console.log(duplicateRnPackages);
-console.timeEnd("duplicateRnPackages");
+// We should verify/check that the rnPackges found exist at the root "as to avoid"
+// console.time("notHoisted");
+const notHoisted = findNotHoistedRnPackages(rnPackages);
+if (notHoisted.length > 0) {
+  console.log(
+    "Following RN packages not found in root node_modules, should these be installed?",
+  );
+  console.log(notHoisted);
+}
+// console.timeEnd("notHoisted");
+
+// Check packages that might need manual duplication checking
+// console.time("duplicateRnPackages");
+const duplicateRnPackages = rnPackages.filter((v) => duplicates.includes(v));
+if (duplicateRnPackages.length > 1) {
+  console.log("Found dupilicated versions of the following RN packages.");
+  console.log(duplicateRnPackages);
+  // console.timeEnd("duplicateRnPackages");
+
+  updateResolutions(duplicateRnPackages, packageMap);
+} else {
+  console.log(
+    "It appears everything is in order, no duplicated RN packages found.",
+  );
+}
