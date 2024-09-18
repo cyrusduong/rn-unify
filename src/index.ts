@@ -1,17 +1,37 @@
-import { execSync } from "child_process";
 import fs from "fs";
 import fg from "fast-glob";
 import path from "path";
+import { execSync } from "child_process";
+
+let unresolveablePackagesFound = false;
 
 function splitVersion(version: string) {
   return version.split(".").map(Number);
 }
 
-function getNewerVersion(a: string, b: string) {
+function getNewerVersion(
+  a: string | null,
+  b: string,
+  opts?: { breakOnMajorVersion?: boolean; packageName?: string },
+) {
+  if (a === null) {
+    return null;
+  }
+
   const aParts = splitVersion(a);
   const bParts = splitVersion(b);
 
   for (let i = 0; i < aParts.length; i++) {
+    if (i === 0 && opts?.breakOnMajorVersion) {
+      if (aParts[0] !== bParts[0]) {
+        unresolveablePackagesFound = true;
+        console.log(
+          `${opts?.packageName} major versions ${a} and ${b} are unresolvable.`,
+        );
+        return null;
+      }
+    }
+
     if (aParts[i] > bParts[i]) return a;
     if (aParts[i] < bParts[i]) return b;
   }
@@ -19,59 +39,18 @@ function getNewerVersion(a: string, b: string) {
   return a; // If they are the same, return the first
 }
 
-function newestVersionFromList(versions: string[]) {
-  let newVersion = versions[0];
+function newestVersionFromList(
+  versions: string[],
+  opts?: { packageName?: string },
+) {
+  let newVersion: string | null = versions[0];
   for (let i = 1; i < versions.length; i++) {
-    newVersion = getNewerVersion(newVersion, versions[i]);
+    newVersion = getNewerVersion(newVersion, versions[i], {
+      breakOnMajorVersion: true,
+      packageName: opts?.packageName,
+    });
   }
   return newVersion;
-}
-
-function resolveConflicts({
-  packageName,
-  versions,
-}: {
-  packageName: string;
-  versions: string[];
-}) {
-  let newVersion = newestVersionFromList(versions);
-  console.log(
-    `Resolved conflict for ${packageName}. Using version ${newVersion}`,
-  );
-}
-
-function isPackageInstalled(pkg: string) {
-  try {
-    return execSync(`yarn list ${pkg}`, { encoding: "utf8" });
-  } catch (error) {
-    console.error("${pkg} is not installed");
-  }
-}
-
-interface YarnDependency {
-  name: string;
-  version: string;
-  children?: YarnDependency[];
-}
-
-function getPackageList() {
-  console.log("Getting packages in repo");
-  const json = execSync("yarn list --json", { encoding: "utf8" });
-  const parsed = JSON.parse(json);
-  const packages = parsed.data.trees as YarnDependency[];
-  return packages;
-}
-
-function why(pkg: string) {
-  console.log(`Running yarn why for ${pkg}`);
-  try {
-    return execSync(`yarn why ${pkg}`, { encoding: "utf8" });
-  } catch (error) {
-    console.error(
-      `Error finding reason for ${pkg}: ${(error as Error)?.message}`,
-    );
-  }
-  console.log(`Finished yarn why for ${pkg}`);
 }
 
 const extensionsToCheck = ["js", "ts", "tsx", "kts", "java", "m", "h", "swift"];
@@ -178,14 +157,19 @@ function updateResolutions(
     packageJson.resolutions = {};
   }
 
-  duplicatePackages.forEach((pkgName) => {
-    const versions = Array.from(packageMap.get(pkgName) || []);
+  duplicatePackages.forEach((packageName) => {
+    const versions = Array.from(packageMap.get(packageName) || []);
     if (versions.length > 1) {
-      const newVersion = newestVersionFromList(versions);
+      const newVersion = newestVersionFromList(versions, {
+        packageName,
+      });
 
-      if (newVersion !== packageJson.resolutions?.[pkgName]) {
+      if (
+        newVersion !== null &&
+        newVersion !== packageJson.resolutions?.[packageName]
+      ) {
         shouldRerunYarn = true;
-        packageJson.resolutions[pkgName] = newVersion;
+        packageJson.resolutions[packageName] = newVersion;
       }
     }
   });
@@ -198,21 +182,12 @@ function updateResolutions(
   }
 }
 
-// console.time("versions");
 const packageMap = parseYarnLockForPackages();
 const packages = Array.from(packageMap.keys());
-// console.timeEnd("versions");
-
-// console.time("rnPackages");
 const rnPackages = await findRnPackages(packages);
-// console.timeEnd("rnPackages");
-
-// console.time("dupes");
 const duplicates = findPackageDuplicates(packageMap);
-// console.timeEnd("dupes");
 
 // We should verify/check that the rnPackges found exist at the root "as to avoid"
-// console.time("notHoisted");
 const notHoisted = findNotHoistedRnPackages(rnPackages);
 if (notHoisted.length > 0) {
   console.log(
@@ -220,17 +195,22 @@ if (notHoisted.length > 0) {
   );
   console.log(notHoisted);
 }
-// console.timeEnd("notHoisted");
 
 // Check packages that might need manual duplication checking
-// console.time("duplicateRnPackages");
 const duplicateRnPackages = rnPackages.filter((v) => duplicates.includes(v));
 if (duplicateRnPackages.length > 1) {
-  console.log("Found dupilicated versions of the following RN packages.");
+  console.log("Found dupilicated versions of the following RN packages:");
   console.log(duplicateRnPackages);
-  // console.timeEnd("duplicateRnPackages");
-
   updateResolutions(duplicateRnPackages, packageMap);
+
+  if (unresolveablePackagesFound) {
+    console.log(
+      "WARN: There are packages that cannot be automatically resolved using resolutions.",
+    );
+    console.log(
+      "Please use `yarn why {packageName}` to understand why they are required.",
+    );
+  }
 } else {
   console.log(
     "It appears everything is in order, no duplicated RN packages found.",
