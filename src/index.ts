@@ -136,6 +136,7 @@ function parseYarnLockForPackages() {
 function findNotHoistedRnPackages(rnPackages: string[]) {
   const notHoisted = rnPackages
     .map((packageName) => {
+      // console.log(`Checking if ${packageName} is hoisted to root node_modules`);
       if (!fs.existsSync(`node_modules/${packageName}`)) return packageName;
     })
     .filter(Boolean);
@@ -178,7 +179,6 @@ function updateResolutions(
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
     console.log("Updated package.json resolutions with resolved versions.");
     console.log("Please re-run yarn to update the node_moudles tree");
-    console.log("");
   }
 }
 
@@ -204,8 +204,8 @@ if (duplicateRnPackages.length > 1) {
   updateResolutions(duplicateRnPackages, packageMap);
 
   if (unresolveablePackagesFound) {
-    console.log(
-      "WARN: There are packages that cannot be automatically resolved using resolutions.",
+    console.warn(
+      "warning: There are packages that cannot be automatically resolved using resolutions.",
     );
     console.log(
       "Please use `yarn why {packageName}` to understand why they are required.",
@@ -216,3 +216,5 @@ if (duplicateRnPackages.length > 1) {
     "It appears everything is in order, no duplicated RN packages found.",
   );
 }
+
+// TODO: Needs a peerDep flow in our FE repo
