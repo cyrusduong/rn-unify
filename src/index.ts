@@ -182,39 +182,81 @@ function updateResolutions(
   }
 }
 
-const packageMap = parseYarnLockForPackages();
-const packages = Array.from(packageMap.keys());
-const rnPackages = await findRnPackages(packages);
-const duplicates = findPackageDuplicates(packageMap);
+function getYarnListPackages(opts: { depth: number }) {
+  const { depth = 0 } = opts;
+  let cmdOpts = "--json";
 
-// We should verify/check that the rnPackges found exist at the root "as to avoid"
-const notHoisted = findNotHoistedRnPackages(rnPackages);
-if (notHoisted.length > 0) {
-  console.log(
-    "Following RN packages not found in root node_modules, should these be installed?",
-  );
-  console.log(notHoisted);
+  if (depth) {
+    cmdOpts += ` --depth=${depth}`;
+  }
+
+  const result = execSync(`yarn list ${cmdOpts}`, { encoding: "utf8" });
+  const parsed = JSON.parse(result);
+  const packages = parsed.data.trees
+    .filter((pkg: { name: string; depth: number }) => pkg.depth <= depth)
+    .map((pkg: { name: string; depth: number }) => {
+      const split = pkg.name.split("@");
+      if (split[0] === "") return `@${split[1]}`; // Had leading @, add it back and return the name
+      if (split[0] !== "") return split[0]; // No leading @, just reuturn name
+    })
+    .filter((v: string, i: number, array: string[]) => array.indexOf(v) === i); // unique
+
+  return packages as string[];
 }
 
-// Check packages that might need manual duplication checking
-const duplicateRnPackages = rnPackages.filter((v) => duplicates.includes(v));
-if (duplicateRnPackages.length > 1) {
-  console.log("Found dupilicated versions of the following RN packages:");
-  console.log(duplicateRnPackages);
-  updateResolutions(duplicateRnPackages, packageMap);
+function getPackageJsonDeps() {
+  const packageJsonPath = path.resolve("package.json");
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
 
-  if (unresolveablePackagesFound) {
-    console.warn(
-      "warning: There are packages that cannot be automatically resolved using resolutions.",
-    );
+  let dependencies = packageJson.dependencies;
+  return Array.from(dependencies.keys());
+}
+
+const packgesDepthZero = getYarnListPackages({ depth: 0 });
+const pkgJsonDeps = getPackageJsonDeps();
+const filteredPkgs = packgesDepthZero.filter((p) => {
+  return pkgJsonDeps.find((d) => d === p);
+});
+
+console.log({ filteredPkgs });
+
+const packageMap = parseYarnLockForPackages();
+// const packages = Array.from(packageMap.keys());
+const rnPackages = await findRnPackages(filteredPkgs);
+const [flag] = process.argv.slice(2);
+if (flag === "--write") {
+  // TODO: out of the rn packages found if we have argv --write lets set// Check if any flag is provided
+  console.log("Updating peerDeps in package.json");
+} else {
+  const duplicates = findPackageDuplicates(packageMap);
+
+  // We should verify/check that the rnPackges found exist at the root "as to avoid"
+  const notHoisted = findNotHoistedRnPackages(rnPackages);
+  if (notHoisted.length > 0) {
     console.log(
-      "Please use `yarn why {packageName}` to understand why they are required.",
+      "Following RN packages not found in root node_modules, should these be installed?",
+    );
+    console.log(notHoisted);
+  }
+
+  // Check packages that might need manual duplication checking
+  const duplicateRnPackages = rnPackages.filter((v) => duplicates.includes(v));
+  if (duplicateRnPackages.length > 1) {
+    console.log("Found dupilicated versions of the following RN packages:");
+    console.log(duplicateRnPackages);
+    updateResolutions(duplicateRnPackages, packageMap);
+
+    if (unresolveablePackagesFound) {
+      console.warn(
+        "warning: There are packages that cannot be automatically resolved using resolutions.",
+      );
+      console.log(
+        "Please use `yarn why {packageName}` to understand why they are required.",
+      );
+    }
+  } else {
+    console.log(
+      "It appears everything is in order, no duplicated RN packages found.",
     );
   }
-} else {
-  console.log(
-    "It appears everything is in order, no duplicated RN packages found.",
-  );
 }
-
-// TODO: Needs a peerDep flow in our FE repo
