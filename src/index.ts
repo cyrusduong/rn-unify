@@ -256,7 +256,7 @@ if (flag === "--write") {
     // For each RN package write to pkgJson the version
 
     if (!packageJson.peerDependencies) {
-      console.log("No resolutions key found in package.json, adding one.");
+      console.log("No peerDependencies key found in package.json, adding one.");
       packageJson.peerDependencies = {};
     }
 
