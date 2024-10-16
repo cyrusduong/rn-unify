@@ -253,12 +253,13 @@ if (flag === "--write") {
   const packageJsonPath = path.resolve("package.json");
   const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
   for (const pkgName of rnPackages) {
-    // For each RN package write to pkgJson the version
-
+    // Let user know we are adding peerDependencies field
     if (!packageJson.peerDependencies) {
       console.log("No peerDependencies key found in package.json, adding one.");
-      packageJson.peerDependencies = {};
     }
+
+    // Clear the existing peerDependencies (so we update packages that are removed)
+    packageJson.peerDependencies = {};
 
     rnPackages.forEach((packageName) => {
       const versions = Array.from(packageMap.get(packageName) || []);
